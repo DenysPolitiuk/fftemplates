@@ -14,16 +14,15 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 const HASH_NAME_SPLIT_CHAR: char = '.';
 
 // TODO:
 //
-// * When running multiple processes seems to end both when one is closed. Would profile name change fix it?
-// Changing name did fix the issue. However, profile is as if it was created from zero. Maybe just
-// changing hash would fix it? Or just the name?
-//
-// * No extensions.
+// * No extensions. Have to restart firefox process to get extension. Same behaviour when running
+// `firefox --profile <path>` directly
 fn main() {
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -35,22 +34,39 @@ fn main() {
                 .takes_value(true)
                 .required(true),
         )
+        .arg(
+            Arg::with_name("delay")
+                .short("d")
+                .long("delay")
+                .help("delay between restarting process (needed for extensions)")
+                .takes_value(true),
+        )
         .get_matches();
 
     let profile_name = matches
         .value_of("base_profile")
         .expect("No base profile provided");
+    let delay = matches
+        .value_of("delay")
+        .or(Some("3"))
+        .unwrap()
+        .parse::<u32>()
+        .expect("delay must be a valid number");
 
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
         .join(Path::new("firefox"));
 
-    if let Err(e) = run(profile_folder, profile_name) {
+    if let Err(e) = run(profile_folder, profile_name, delay) {
         println!("Error from run : {}", e);
     }
 }
 
-fn run<P: AsRef<Path>>(profile_folder: P, profile_name: &str) -> Result<(), Box<Error>> {
+fn run<P: AsRef<Path>>(
+    profile_folder: P,
+    profile_name: &str,
+    process_restart_delay: u32,
+) -> Result<(), Box<Error>> {
     let tmp_dir = TempDir::new()?;
     let tmp_path = tmp_dir.path().to_owned();
 
@@ -65,16 +81,16 @@ fn run<P: AsRef<Path>>(profile_folder: P, profile_name: &str) -> Result<(), Box<
 
             let options = CopyOptions::new();
             let start = std::time::SystemTime::now();
-            // unique name as milliseconds after epoch
+            // some unique name for new temp profile
             let tmp_dir_name = format!(
                 "{}",
                 start.duration_since(std::time::UNIX_EPOCH)?.as_millis()
             );
-            let new_tmp = tmp_dir.path().join(tmp_dir_name);
-            println!("new name is {}", new_tmp.display());
-            dir::create_all(&new_tmp, false)?;
-            dir::copy(&p, &new_tmp, &options)?;
-            new_tmp
+            let new_tmp_path = tmp_dir.path().join(tmp_dir_name);
+            dir::create_all(&new_tmp_path, false)?;
+            let vec = fs::read_dir(&p)?.map(|x| x.unwrap().path()).collect();
+            fs_extra::copy_items(&vec, &new_tmp_path, &options)?;
+            new_tmp_path
         }
     };
 
@@ -84,7 +100,9 @@ fn run<P: AsRef<Path>>(profile_folder: P, profile_name: &str) -> Result<(), Box<
 
     println!("Command is : {}", command);
 
-    execute_cmd(command)?;
+    execute_cmd(&command, true, process_restart_delay)?;
+    println!("done with first process...");
+    execute_cmd(&command, false, process_restart_delay)?;
 
     tmp_dir.close()?;
 
@@ -125,23 +143,31 @@ fn find_profile_folder<P: AsRef<Path>>(
     Ok(found)
 }
 
-pub fn execute_cmd(cmd: String) -> Result<(), Box<Error>> {
+pub fn execute_cmd(
+    cmd: &String,
+    first_time: bool,
+    first_time_delay: u32,
+) -> Result<(), Box<Error>> {
     let cmd_split: Vec<_> = cmd.split(' ').collect();
     if cmd_split.len() < 1 || cmd_split[0] == "" {
         return Err("No command specified")?;
     }
 
-    let proc;
+    let mut proc = Command::new(cmd_split[0])
+        .args(&cmd_split[1..cmd_split.len()])
+        .spawn()?;
 
     if cmd_split.len() < 2 {
         proc = Command::new(cmd_split[0]).spawn()?;
     } else {
-        proc = Command::new(cmd_split[0])
-            .args(&cmd_split[1..cmd_split.len()])
-            .spawn()?;
     }
 
-    let _ = proc.wait_with_output()?;
+    if first_time {
+        thread::sleep(Duration::from_secs(first_time_delay.into()));
+        proc.kill()?;
+    } else {
+        let _ = proc.wait_with_output()?;
+    }
 
     Ok(())
 }
