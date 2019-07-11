@@ -15,13 +15,15 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
+use std::time;
 use std::time::Duration;
+use std::time::SystemTime;
 
 const HASH_NAME_SPLIT_CHAR: char = '.';
 
 // TODO:
 //
-// * No extensions. Have to restart firefox process to get extension. Same behaviour when running
+// * Have to restart firefox process to get extension. Same behaviour when running
 // `firefox --profile <path>` directly
 fn main() {
     let matches = App::new(env!("CARGO_PKG_NAME"))
@@ -53,6 +55,11 @@ fn main() {
         .parse::<u32>()
         .expect("delay must be a valid number");
 
+    if delay > 60 {
+        // unreasonably long delay
+        panic!("Delay too long, should be 60 sec or less");
+    }
+
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
         .join(Path::new("firefox"));
@@ -68,40 +75,30 @@ fn run<P: AsRef<Path>>(
     process_restart_delay: u32,
 ) -> Result<(), Box<Error>> {
     let tmp_dir = TempDir::new()?;
-    let tmp_path = tmp_dir.path().to_owned();
 
-    println!("{}", tmp_path.display());
+    let found_profile_pair = find_profile_folder(profile_folder, profile_name)?;
 
-    let found_path = find_profile_folder(profile_folder, profile_name)?;
-
-    let found_name = match found_path {
+    let (found_profile_path, _) = match found_profile_pair {
         None => Err(format!("No profile with name `{}` found", profile_name))?,
-        Some((p, name)) => {
-            println!("Found profile {} at : {}", name, p.display());
-
-            let options = CopyOptions::new();
-            let start = std::time::SystemTime::now();
-            // some unique name for new temp profile
-            let tmp_dir_name = format!(
-                "{}",
-                start.duration_since(std::time::UNIX_EPOCH)?.as_millis()
-            );
-            let new_tmp_path = tmp_dir.path().join(tmp_dir_name);
-            dir::create_all(&new_tmp_path, false)?;
-            let vec = fs::read_dir(&p)?.map(|x| x.unwrap().path()).collect();
-            fs_extra::copy_items(&vec, &new_tmp_path, &options)?;
-            new_tmp_path
-        }
+        Some((p, name)) => (p, name),
     };
 
-    let temp_profile_path = Path::new(&tmp_path).join(found_name);
+    let options = CopyOptions::new();
+    let start = SystemTime::now();
+    // some unique name for new temp profile
+    let new_tmp_dir_name = format!("{}", start.duration_since(time::UNIX_EPOCH)?.as_millis());
+    let new_tmp_path = tmp_dir.path().join(new_tmp_dir_name);
+    dir::create_all(&new_tmp_path, false)?;
+    let vec = fs::read_dir(&found_profile_path)?
+        .map(|x| x.expect("unable to read profile folder").path())
+        .collect();
+    fs_extra::copy_items(&vec, &new_tmp_path, &options)?;
 
-    let command = format!("firefox --profile {}", temp_profile_path.display());
+    let command = format!("firefox --profile {}", new_tmp_path.display());
 
-    println!("Command is : {}", command);
-
+    // first process will have extensions not working properly
+    // need to restart the process to have them working
     execute_cmd(&command, true, process_restart_delay)?;
-    println!("done with first process...");
     execute_cmd(&command, false, process_restart_delay)?;
 
     tmp_dir.close()?;
@@ -134,7 +131,6 @@ fn find_profile_folder<P: AsRef<Path>>(
         }
         let entry_profile_name = name_split[1];
         if entry_profile_name == profile_name {
-            println!("{}\t\t->\t{}", entry_profile_name, entry_path.display());
             found = Some((entry_path, entry_name));
             break;
         }
