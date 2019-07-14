@@ -33,8 +33,7 @@ fn main() {
                 .short("p")
                 .long("profile")
                 .help("profile to run")
-                .takes_value(true)
-                .required(true),
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("delay")
@@ -47,7 +46,8 @@ fn main() {
 
     let profile_name = matches
         .value_of("base_profile")
-        .expect("No base profile provided");
+        .or(Some("default"))
+        .unwrap();
     let delay = matches
         .value_of("delay")
         .or(Some("3"))
