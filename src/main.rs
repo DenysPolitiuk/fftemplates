@@ -21,6 +21,18 @@ use std::time::SystemTime;
 
 const HASH_NAME_SPLIT_CHAR: char = '.';
 
+const IGNORE_FILES: [&str; 9] = [
+    "cache2",
+    "cookies.sqlite-wal",
+    "favicons.sqlite-wal",
+    "lock",
+    "places.sqlite-wal",
+    "safebrowsing",
+    "sessionstore-backups",
+    "startupCache",
+    "webappsstore.sqllite-wal",
+];
+
 // TODO:
 //
 // * Have to restart firefox process to get extension. Same behaviour when running
@@ -91,6 +103,27 @@ fn run<P: AsRef<Path>>(
     dir::create_all(&new_tmp_path, false)?;
     let vec = fs::read_dir(&found_profile_path)?
         .map(|x| x.expect("unable to read profile folder").path())
+        .filter_map(|e| {
+            let mut valid = false;
+            let name = e.as_path().file_name();
+            if let Some(name) = name {
+                let name = name.to_str();
+                if let Some(name) = name {
+                    valid = true;
+                    for str_to_ignore in IGNORE_FILES.iter() {
+                        if name == *str_to_ignore {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if valid {
+                Some(e)
+            } else {
+                None
+            }
+        })
         .collect();
     fs_extra::copy_items(&vec, &new_tmp_path, &options)?;
 
