@@ -9,6 +9,7 @@ use fs_extra::dir;
 use fs_extra::dir::CopyOptions;
 use tempfile::TempDir;
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
@@ -86,6 +87,11 @@ fn run<P: AsRef<Path>>(
     profile_name: &str,
     process_restart_delay: u32,
 ) -> Result<(), Box<Error>> {
+    let mut ignore_entries = HashSet::new();
+    for str_to_ignore in IGNORE_FILES.iter() {
+        ignore_entries.insert(*str_to_ignore);
+    }
+
     let tmp_dir = TempDir::new()?;
 
     let found_profile_pair = find_profile_folder(profile_folder, profile_name)?;
@@ -109,13 +115,7 @@ fn run<P: AsRef<Path>>(
             if let Some(name) = name {
                 let name = name.to_str();
                 if let Some(name) = name {
-                    valid = true;
-                    for str_to_ignore in IGNORE_FILES.iter() {
-                        if name == *str_to_ignore {
-                            valid = false;
-                            break;
-                        }
-                    }
+                    valid = !ignore_entries.contains(name);
                 }
             }
             if valid {
