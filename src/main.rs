@@ -86,7 +86,7 @@ fn run<P: AsRef<Path>>(
     profile_folder: P,
     profile_name: &str,
     process_restart_delay: u32,
-) -> Result<(), Box<Error>> {
+) -> Result<(), Box<dyn Error>> {
     let mut ignore_entries = HashSet::new();
     for str_to_ignore in IGNORE_FILES.iter() {
         ignore_entries.insert(*str_to_ignore);
@@ -142,7 +142,7 @@ fn run<P: AsRef<Path>>(
 fn find_profile_folder<P: AsRef<Path>>(
     profile_folder: P,
     profile_name: &str,
-) -> Result<Option<(PathBuf, String)>, Box<Error>> {
+) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
     let mut found = None;
 
     for entry in fs::read_dir(profile_folder)? {
@@ -176,7 +176,7 @@ pub fn execute_cmd(
     cmd: &String,
     first_time: bool,
     first_time_delay: u32,
-) -> Result<(), Box<Error>> {
+) -> Result<(), Box<dyn Error>> {
     let cmd_split: Vec<_> = cmd.split(' ').collect();
     if cmd_split.len() < 1 || cmd_split[0] == "" {
         return Err("No command specified")?;
