@@ -131,7 +131,7 @@ fn run<P: AsRef<Path>>(
 
     // first process will have extensions not working properly
     // need to restart the process to have them working
-    execute_cmd(&command, true, process_restart_delay)?;
+    // execute_cmd(&command, true, process_restart_delay)?;
     execute_cmd(&command, false, process_restart_delay)?;
 
     tmp_dir.close()?;
