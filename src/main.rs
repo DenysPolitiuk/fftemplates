@@ -21,9 +21,7 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::thread;
 use std::time;
-use std::time::Duration;
 use std::time::SystemTime;
 
 const HASH_NAME_SPLIT_CHAR: char = '.';
@@ -52,45 +50,23 @@ fn main() {
                 .help("profile to run")
                 .takes_value(true),
         )
-        .arg(
-            Arg::with_name("delay")
-                .short("d")
-                .long("delay")
-                .help("delay between restarting process (needed for extensions)")
-                .takes_value(true),
-        )
         .get_matches();
 
     let profile_name = matches
         .value_of("base_profile")
         .or(Some("default"))
         .unwrap();
-    let delay = matches
-        .value_of("delay")
-        .or(Some("3"))
-        .unwrap()
-        .parse::<u32>()
-        .expect("delay must be a valid number");
-
-    if delay > 60 {
-        // unreasonably long delay
-        panic!("Delay too long, should be 60 sec or less");
-    }
 
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
         .join(Path::new("firefox"));
 
-    if let Err(e) = run(profile_folder, profile_name, delay) {
+    if let Err(e) = run(profile_folder, profile_name) {
         println!("Error from run : {}", e);
     }
 }
 
-fn run<P: AsRef<Path>>(
-    profile_folder: P,
-    profile_name: &str,
-    process_restart_delay: u32,
-) -> Result<(), Box<dyn Error>> {
+fn run<P: AsRef<Path>>(profile_folder: P, profile_name: &str) -> Result<(), Box<dyn Error>> {
     let mut ignore_entries = HashSet::new();
     for str_to_ignore in IGNORE_FILES.iter() {
         ignore_entries.insert(*str_to_ignore);
@@ -139,10 +115,7 @@ fn run<P: AsRef<Path>>(
 
     let command = format!("firefox --profile {}", new_tmp_path.display());
 
-    // first process will have extensions not working properly
-    // need to restart the process to have them working
-    // execute_cmd(&command, true, process_restart_delay)?;
-    execute_cmd(&command, false, process_restart_delay)?;
+    execute_cmd(&command)?;
 
     tmp_dir.close()?;
 
@@ -221,31 +194,22 @@ fn find_profile_folder<P: AsRef<Path>>(
     Ok(found)
 }
 
-pub fn execute_cmd(
-    cmd: &String,
-    first_time: bool,
-    first_time_delay: u32,
-) -> Result<(), Box<dyn Error>> {
+pub fn execute_cmd(cmd: &String) -> Result<(), Box<dyn Error>> {
     let cmd_split: Vec<_> = cmd.split(' ').collect();
     if cmd_split.len() < 1 || cmd_split[0] == "" {
         return Err("No command specified")?;
     }
 
-    let mut proc = Command::new(cmd_split[0])
-        .args(&cmd_split[1..cmd_split.len()])
-        .spawn()?;
-
+    let proc;
     if cmd_split.len() < 2 {
         proc = Command::new(cmd_split[0]).spawn()?;
     } else {
+        proc = Command::new(cmd_split[0])
+            .args(&cmd_split[1..cmd_split.len()])
+            .spawn()?;
     }
 
-    if first_time {
-        thread::sleep(Duration::from_secs(first_time_delay.into()));
-        proc.kill()?;
-    } else {
-        let _ = proc.wait_with_output()?;
-    }
+    let _ = proc.wait_with_output()?;
 
     Ok(())
 }
