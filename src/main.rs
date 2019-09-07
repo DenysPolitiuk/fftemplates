@@ -7,11 +7,17 @@ use clap::App;
 use clap::Arg;
 use fs_extra::dir;
 use fs_extra::dir::CopyOptions;
+use regex::Captures;
+use regex::Regex;
 use tempfile::TempDir;
 
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
+use std::fs::File;
+use std::io::prelude::*;
+use std::io::BufReader;
+use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -34,10 +40,8 @@ const IGNORE_FILES: [&str; 9] = [
     "webappsstore.sqllite-wal",
 ];
 
-// TODO:
-//
-// * Have to restart firefox process to get extension. Same behaviour when running
-// `firefox --profile <path>` directly
+const EXTENSIONS_JSON: &str = "extensions.json";
+
 fn main() {
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -126,6 +130,12 @@ fn run<P: AsRef<Path>>(
         })
         .collect();
     fs_extra::copy_items(&vec, &new_tmp_path, &options)?;
+    let extensions = new_tmp_path.join(Path::new(EXTENSIONS_JSON));
+    if extensions.exists() {
+        if let Err(e) = adjust_extensions_json(&extensions) {
+            Err(format!("Error during adjusting extensions json : {}", e))?;
+        }
+    }
 
     let command = format!("firefox --profile {}", new_tmp_path.display());
 
@@ -135,6 +145,45 @@ fn run<P: AsRef<Path>>(
     execute_cmd(&command, false, process_restart_delay)?;
 
     tmp_dir.close()?;
+
+    Ok(())
+}
+
+fn adjust_extensions_json(extensions: &PathBuf) -> Result<(), Box<dyn Error>> {
+    let mut content = String::new();
+    {
+        let file = File::open(extensions)?;
+        let mut buf_reader = BufReader::new(file);
+        buf_reader.read_to_string(&mut content)?;
+    }
+
+    let mut temp_path = Path::new(extensions).to_path_buf();
+    temp_path.pop();
+    let re = Regex::new(
+        r#"(?x)
+    ("path":)                       # starting with "path":
+    (")(                              # "
+    ([\w\W--"]+)                    # any number of words or characters except for " to avoid going over the value in json
+    (extensions[\w\W--"]+\.xpi)     # trying to match ending of extenstions/some.extension@name.xpi
+    )(")                              # "
+    "#,
+    )?;
+
+    let results = re.replace_all(content.as_str(), |caps: &Captures| {
+        format!(
+            "{}{}{}{}",
+            &caps[1],
+            &caps[2],
+            temp_path.join(&caps[5]).display(),
+            &caps[6]
+        )
+    });
+
+    {
+        let file = File::create(extensions)?;
+        let mut buf_writer = BufWriter::new(file);
+        buf_writer.write_all(results.as_bytes())?;
+    }
 
     Ok(())
 }
