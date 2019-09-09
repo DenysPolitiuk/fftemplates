@@ -45,9 +45,8 @@ fn main() {
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
             Arg::with_name("base_profile")
-                .short("p")
-                .long("profile")
                 .help("profile to run")
+                .index(1)
                 .takes_value(true),
         )
         .get_matches();
