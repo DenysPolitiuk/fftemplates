@@ -40,6 +40,12 @@ const IGNORE_FILES: [&str; 9] = [
 
 const EXTENSIONS_JSON: &str = "extensions.json";
 
+pub struct Config {
+    pub profile_name: String,
+    pub profile_folder: PathBuf,
+    pub bookmarks_sync: bool,
+}
+
 fn main() {
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -49,23 +55,38 @@ fn main() {
                 .index(1)
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("bookmarks_sync")
+                .help("sync new bookmarks to original profile")
+                .short("b")
+                .long("--bookmarks"),
+        )
         .get_matches();
 
     let profile_name = matches
         .value_of("base_profile")
         .or(Some("default"))
         .unwrap();
+    let bookmarks_sync = matches.is_present("bookmarks_sync");
 
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
         .join(Path::new("firefox"));
 
-    if let Err(e) = run(profile_folder, profile_name) {
+    let conf = Config {
+        profile_name: profile_name.to_string(),
+        profile_folder,
+        bookmarks_sync,
+    };
+    if let Err(e) = run(conf) {
         println!("Error from run : {}", e);
     }
 }
 
-fn run<P: AsRef<Path>>(profile_folder: P, profile_name: &str) -> Result<(), Box<dyn Error>> {
+fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let profile_folder = config.profile_folder;
+    let profile_name = config.profile_name;
+
     let mut ignore_entries = HashSet::new();
     for str_to_ignore in IGNORE_FILES.iter() {
         ignore_entries.insert(*str_to_ignore);
@@ -73,7 +94,7 @@ fn run<P: AsRef<Path>>(profile_folder: P, profile_name: &str) -> Result<(), Box<
 
     let tmp_dir = TempDir::new()?;
 
-    let found_profile_pair = find_profile_folder(profile_folder, profile_name)?;
+    let found_profile_pair = find_profile_folder(profile_folder, &profile_name)?;
 
     let (found_profile_path, _) = match found_profile_pair {
         None => Err(format!("No profile with name `{}` found", profile_name))?,
