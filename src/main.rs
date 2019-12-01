@@ -24,6 +24,8 @@ use std::process::Command;
 use std::time;
 use std::time::SystemTime;
 
+use fftemplates::bookmarks;
+
 const HASH_NAME_SPLIT_CHAR: char = '.';
 
 const IGNORE_FILES: [&str; 9] = [
@@ -84,9 +86,6 @@ fn main() {
 }
 
 fn run(config: Config) -> Result<(), Box<dyn Error>> {
-    let profile_folder = config.profile_folder;
-    let profile_name = config.profile_name;
-
     let mut ignore_entries = HashSet::new();
     for str_to_ignore in IGNORE_FILES.iter() {
         ignore_entries.insert(*str_to_ignore);
@@ -94,10 +93,13 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     let tmp_dir = TempDir::new()?;
 
-    let found_profile_pair = find_profile_folder(profile_folder, &profile_name)?;
+    let found_profile_pair = find_profile_folder(&config.profile_folder, &config.profile_name)?;
 
     let (found_profile_path, _) = match found_profile_pair {
-        None => Err(format!("No profile with name `{}` found", profile_name))?,
+        None => Err(format!(
+            "No profile with name `{}` found",
+            config.profile_name
+        ))?,
         Some((p, name)) => (p, name),
     };
 
@@ -135,7 +137,37 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     let command = format!("firefox --profile {}", new_tmp_path.display());
 
+    let latest_bookmark = match config.bookmarks_sync {
+        false => None,
+        true => {
+            // TODO: fix unwrap
+            match bookmarks::get_latest_bookmark(found_profile_path.as_os_str().to_str().unwrap()) {
+                Err(e) => {
+                    return Err(format!("Error during get latest bookmark : {}", e))?;
+                }
+                Ok(bookmark) => bookmark,
+            }
+        }
+    };
+
     execute_cmd(&command)?;
+
+    if config.bookmarks_sync {
+        if let Some(latest_bookmark) = latest_bookmark {
+            // TODO: fix unwrap
+            let new_entries = match bookmarks::get_new_entries(
+                new_tmp_path.as_os_str().to_str().unwrap(),
+                &latest_bookmark,
+            ) {
+                Err(e) => {
+                    return Err(format!("Error during get new entries : {}", e))?;
+                }
+                Ok(entries) => entries,
+            };
+            println!("New entries are :");
+            println!("{:?}", new_entries);
+        }
+    }
 
     tmp_dir.close()?;
 
