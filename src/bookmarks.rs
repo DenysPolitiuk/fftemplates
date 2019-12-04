@@ -1,6 +1,7 @@
 use rusqlite;
 use rusqlite::{params, Connection};
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
 
@@ -96,8 +97,8 @@ pub fn get_new_entries(
 ) -> Result<
     (
         Option<Vec<Bookmark>>,
-        Option<Vec<Place>>,
-        Option<Vec<Origin>>,
+        Option<HashMap<i64, Place>>,
+        Option<HashMap<i64, Origin>>,
     ),
     Box<dyn Error>,
 > {
@@ -219,7 +220,7 @@ pub fn get_bookmarks_between_two(
 pub fn get_new_places(
     profile_folder: &str,
     bookmarks: &[Bookmark],
-) -> Result<Option<Vec<Place>>, Box<dyn Error>> {
+) -> Result<Option<HashMap<i64, Place>>, Box<dyn Error>> {
     let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
     let conn = Connection::open(database_file)?;
 
@@ -236,7 +237,7 @@ pub fn get_new_places(
         ",
     )?;
 
-    let mut places = vec![];
+    let mut places = HashMap::new();
     for bookmark in bookmarks {
         let places_id = match bookmark.fk {
             None => continue,
@@ -266,7 +267,7 @@ pub fn get_new_places(
         for place in places_iter {
             match place {
                 Ok(place) => {
-                    places.push(place);
+                    places.insert(places_id, place);
                 }
                 Err(e) => return Err(e)?,
             };
@@ -282,8 +283,8 @@ pub fn get_new_places(
 
 pub fn get_new_origins(
     profile_folder: &str,
-    places: &[Place],
-) -> Result<Option<Vec<Origin>>, Box<dyn Error>> {
+    places: &HashMap<i64, Place>,
+) -> Result<Option<HashMap<i64, Origin>>, Box<dyn Error>> {
     let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
     let conn = Connection::open(database_file)?;
 
@@ -298,8 +299,8 @@ pub fn get_new_origins(
         ",
     )?;
 
-    let mut origins = vec![];
-    for place in places {
+    let mut origins = HashMap::new();
+    for place in places.values() {
         let origin_id = match place.origin_id {
             None => continue,
             Some(v) => v,
@@ -316,7 +317,7 @@ pub fn get_new_origins(
         for origin in origins_iter {
             match origin {
                 Ok(origin) => {
-                    origins.push(origin);
+                    origins.insert(origin_id, origin);
                 }
                 Err(e) => return Err(e)?,
             };
