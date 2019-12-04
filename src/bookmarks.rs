@@ -330,3 +330,216 @@ pub fn get_new_origins(
         Ok(Some(origins))
     }
 }
+
+pub fn insert_new_bookmarks(
+    profile_folder: &str,
+    new_bookmarks: &mut [Bookmark],
+    new_places: &HashMap<i64, Place>,
+) -> Result<(), Box<dyn Error>> {
+    let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
+    let conn = Connection::open(database_file)?;
+
+    // not doing a check for duplicate, assuming this will not happened
+
+    let mut max_id_statement = conn.prepare(
+        "
+            select max(id) from moz_bookmarks;
+        ",
+    )?;
+
+    for bookmark in new_bookmarks.iter_mut() {
+        // get max id in the table just in case something was already inserted
+        let max_id = max_id_statement.query_map(params![], |row| row.get(0))?;
+        for max_id in max_id {
+            let max_id = match max_id {
+                Err(e) => return Err(e)?,
+                Ok(max_id) => max_id,
+            };
+            // check if current max id is not the one
+            // before inserting current entry
+            if max_id != bookmark.id - 1 {
+                bookmark.id = max_id;
+            }
+        }
+
+        if let Some(fk) = bookmark.fk {
+            bookmark.fk = match new_places.get(&fk) {
+                None => return Err("unable to find fk place from bookmark")?,
+                Some(v) => Some(v.id),
+            };
+        }
+
+        conn.execute(
+            "
+                insert  into moz_bookmarks (
+                    id, type, fk, parent, position,
+                    title, keyword_id, folder_type, dateAdded, lastModified,
+                    guid, syncStatus, syncChangeCounter)
+                values(
+                    ?1, ?2, ?3, ?4, ?5,
+                    ?6, ?7, ?8, ?9, ?10,
+                    ?11, ?12, ?13)
+            ",
+            params![
+                bookmark.id,
+                bookmark.r#type,
+                bookmark.fk,
+                bookmark.parent,
+                bookmark.position,
+                bookmark.title,
+                bookmark.keyword_id,
+                bookmark.folder_type,
+                bookmark.date_added,
+                bookmark.last_modified,
+                bookmark.guid,
+                bookmark.sync_status,
+                bookmark.sync_change_counter
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn insert_new_places(
+    profile_folder: &str,
+    new_places: &mut HashMap<i64, Place>,
+    new_origins: &HashMap<i64, Origin>,
+) -> Result<(), Box<dyn Error>> {
+    let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
+    let conn = Connection::open(database_file)?;
+
+    // not doing a check for duplicate, as it seems unlikely to have duplicate
+
+    let mut max_id_statement = conn.prepare(
+        "
+            select max(id) from moz_places;
+        ",
+    )?;
+    for place in new_places.values_mut() {
+        // get max id in the table just in case something was already inserted
+        let max_id = max_id_statement.query_map(params![], |row| row.get(0))?;
+        for max_id in max_id {
+            let max_id = match max_id {
+                Err(e) => return Err(e)?,
+                Ok(max_id) => max_id,
+            };
+            // check if current max id is not the one
+            // before inserting current entry
+            if max_id != place.id - 1 {
+                place.id = max_id;
+            }
+        }
+
+        // check to see if origin had it's id changed
+        // this can happened if a different origin was inserted
+        // with an id of current origin and place needs to match to
+        // the correct origin
+        if let Some(origin_id) = place.origin_id {
+            place.origin_id = match new_origins.get(&origin_id) {
+                None => return Err("unable to find origin from place")?,
+                Some(v) => Some(v.id),
+            };
+        }
+
+        conn.execute(
+            "insert into moz_places (id, url, title, rev_host,
+                visit_count, hidden, typed, favicon_id,
+                frecency, last_visit_date, guid, foreign_count,
+                url_hash, description, preview_image_url, origin_id)
+            values(?1, ?2, ?3, ?4,
+                ?5, ?6, ?7, ?8,
+                ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16)",
+            params![
+                place.id,
+                place.url,
+                place.title,
+                place.rev_host,
+                place.visit_count,
+                place.hidden,
+                place.typed,
+                place.favicon_id,
+                place.frecency,
+                place.last_visit_date,
+                place.guid,
+                place.foreign_count,
+                place.url_hash,
+                place.description,
+                place.preview_image_url,
+                place.origin_id
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn insert_new_origins(
+    profile_folder: &str,
+    new_origins: &mut HashMap<i64, Origin>,
+) -> Result<(), Box<dyn Error>> {
+    let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
+    let conn = Connection::open(database_file)?;
+
+    let mut statement = conn.prepare(
+        "
+            select id
+            from moz_origins
+            where 1=1
+            and prefix = :prefix
+            and host = :host
+            and frecency = :frecency
+        ",
+    )?;
+    let mut max_id_statement = conn.prepare(
+        "
+            select max(id) from moz_origins;
+        ",
+    )?;
+
+    for origin in new_origins.values_mut() {
+        // get new id for this origin, if it already exists
+        let results = statement.query_map_named(
+            &[
+                (":prefix", &origin.prefix),
+                (":host", &origin.host),
+                (":frecency", &origin.frecency),
+            ],
+            |row| row.get(0),
+        )?;
+        let mut new_id: Option<i64> = None;
+        for result in results {
+            match result {
+                Err(e) => return Err(e)?,
+                Ok(result) => new_id = Some(result),
+            };
+        }
+        if let Some(new_id) = new_id {
+            origin.id = new_id;
+        } else {
+            // get max id in the table just in case something was already inserted
+            let max_id = max_id_statement.query_map(params![], |row| row.get(0))?;
+            for max_id in max_id {
+                let max_id = match max_id {
+                    Err(e) => return Err(e)?,
+                    Ok(max_id) => max_id,
+                };
+                // check if current max id is not the one
+                // before inserting current entry
+                if max_id != origin.id - 1 {
+                    origin.id = max_id;
+                }
+            }
+
+            // insert in the case that origin doesn't exist
+            conn.execute(
+                "insert into moz_origins (id, prefix, host, frecency)
+                values(?1, ?2, ?3)",
+                params![origin.id, origin.prefix, origin.host, origin.frecency],
+            )?;
+        }
+    }
+
+    Ok(())
+}
