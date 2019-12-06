@@ -331,10 +331,45 @@ pub fn get_new_origins(
     }
 }
 
+pub fn insert_new_entries(
+    profile_folder: &str,
+    new_bookmarks: Option<&mut Vec<Bookmark>>,
+    mut new_places: Option<&mut HashMap<i64, Place>>,
+    mut new_origins: Option<&mut HashMap<i64, Origin>>,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(ref mut new_origins) = new_origins {
+        if let Err(e) = insert_new_origins(profile_folder, new_origins) {
+            eprintln!("Error during insert new origins : {}", e);
+        }
+    }
+    // hack to transform Option<&mut ...> into Option<&...>
+    let new_origins = match new_origins {
+        None => None,
+        Some(v) => Some(&*v),
+    };
+    if let Some(ref mut new_places) = new_places {
+        if let Err(e) = insert_new_places(profile_folder, new_places, new_origins) {
+            eprintln!("Error during insert new places : {}", e);
+        }
+    }
+    // hack to transform Option<&mut ...> into Option<&...>
+    let new_places = match new_places {
+        None => None,
+        Some(v) => Some(&*v),
+    };
+    if let Some(mut new_bookmarks) = new_bookmarks {
+        if let Err(e) = insert_new_bookmarks(profile_folder, &mut new_bookmarks, new_places) {
+            eprintln!("Error during insert new bookmarks : {}", e);
+        }
+    }
+
+    Ok(())
+}
+
 pub fn insert_new_bookmarks(
     profile_folder: &str,
     new_bookmarks: &mut [Bookmark],
-    new_places: &HashMap<i64, Place>,
+    new_places: Option<&HashMap<i64, Place>>,
 ) -> Result<(), Box<dyn Error>> {
     let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
     let conn = Connection::open(database_file)?;
@@ -359,14 +394,17 @@ pub fn insert_new_bookmarks(
             // before inserting current entry
             if max_id != bookmark.id - 1 {
                 bookmark.id = max_id;
+                bookmark.id += 1;
             }
         }
 
-        if let Some(fk) = bookmark.fk {
-            bookmark.fk = match new_places.get(&fk) {
-                None => return Err("unable to find fk place from bookmark")?,
-                Some(v) => Some(v.id),
-            };
+        if let Some(new_places) = new_places {
+            if let Some(fk) = bookmark.fk {
+                bookmark.fk = match new_places.get(&fk) {
+                    None => return Err("unable to find fk place from bookmark")?,
+                    Some(v) => Some(v.id),
+                };
+            }
         }
 
         conn.execute(
@@ -404,7 +442,7 @@ pub fn insert_new_bookmarks(
 pub fn insert_new_places(
     profile_folder: &str,
     new_places: &mut HashMap<i64, Place>,
-    new_origins: &HashMap<i64, Origin>,
+    new_origins: Option<&HashMap<i64, Origin>>,
 ) -> Result<(), Box<dyn Error>> {
     let database_file = Path::new(profile_folder).join(Path::new("places.sqlite"));
     let conn = Connection::open(database_file)?;
@@ -428,6 +466,7 @@ pub fn insert_new_places(
             // before inserting current entry
             if max_id != place.id - 1 {
                 place.id = max_id;
+                place.id += 1;
             }
         }
 
@@ -435,11 +474,13 @@ pub fn insert_new_places(
         // this can happened if a different origin was inserted
         // with an id of current origin and place needs to match to
         // the correct origin
-        if let Some(origin_id) = place.origin_id {
-            place.origin_id = match new_origins.get(&origin_id) {
-                None => return Err("unable to find origin from place")?,
-                Some(v) => Some(v.id),
-            };
+        if let Some(new_origins) = new_origins {
+            if let Some(origin_id) = place.origin_id {
+                place.origin_id = match new_origins.get(&origin_id) {
+                    None => return Err("unable to find origin from place")?,
+                    Some(v) => Some(v.id),
+                };
+            }
         }
 
         conn.execute(
@@ -529,13 +570,14 @@ pub fn insert_new_origins(
                 // before inserting current entry
                 if max_id != origin.id - 1 {
                     origin.id = max_id;
+                    origin.id += 1;
                 }
             }
 
             // insert in the case that origin doesn't exist
             conn.execute(
                 "insert into moz_origins (id, prefix, host, frecency)
-                values(?1, ?2, ?3)",
+                values(?1, ?2, ?3, ?4)",
                 params![origin.id, origin.prefix, origin.host, origin.frecency],
             )?;
         }

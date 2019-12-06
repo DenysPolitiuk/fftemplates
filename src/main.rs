@@ -155,17 +155,25 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
     if config.bookmarks_sync {
         if let Some(latest_bookmark) = latest_bookmark {
             // TODO: fix unwrap
-            let new_entries = match bookmarks::get_new_entries(
-                new_tmp_path.as_os_str().to_str().unwrap(),
-                &latest_bookmark,
+            let (mut new_bookmarks, mut new_places, mut new_origins) =
+                match bookmarks::get_new_entries(
+                    new_tmp_path.as_os_str().to_str().unwrap(),
+                    &latest_bookmark,
+                ) {
+                    Err(e) => {
+                        return Err(format!("Error during get new entries : {}", e))?;
+                    }
+                    Ok(entries) => entries,
+                };
+            // TODO: fix unwrap
+            if let Err(e) = bookmarks::insert_new_entries(
+                found_profile_path.as_os_str().to_str().unwrap(),
+                new_bookmarks.as_mut(),
+                new_places.as_mut(),
+                new_origins.as_mut(),
             ) {
-                Err(e) => {
-                    return Err(format!("Error during get new entries : {}", e))?;
-                }
-                Ok(entries) => entries,
-            };
-            println!("New entries are :");
-            println!("{:?}", new_entries);
+                eprintln!("Error during insert new entries : {}", e);
+            }
         }
     }
 
