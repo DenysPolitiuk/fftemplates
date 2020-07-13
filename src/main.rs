@@ -25,6 +25,7 @@ use std::time;
 use std::time::SystemTime;
 
 use fftemplates::bookmarks;
+use fftemplates::session;
 
 const HASH_NAME_SPLIT_CHAR: char = '.';
 
@@ -46,6 +47,9 @@ pub struct Config {
     pub profile_name: String,
     pub profile_folder: PathBuf,
     pub bookmarks_sync: bool,
+    pub session_file_to_load: Option<String>,
+    pub file_to_store_session_to: Option<String>,
+    pub same_load_and_save: Option<bool>,
 }
 
 fn main() {
@@ -63,6 +67,26 @@ fn main() {
                 .short("b")
                 .long("--bookmarks"),
         )
+        .arg(
+            Arg::with_name("load_session")
+                .help("load session file")
+                .takes_value(true)
+                .short("l"),
+        )
+        .arg(
+            Arg::with_name("save_session")
+                .help("save session file after exiting")
+                .takes_value(true)
+                .short("s"),
+        )
+        .arg(
+            Arg::with_name("save_load_session")
+                .conflicts_with("save_session")
+                .conflicts_with("load_session")
+                .help("load session from a file and save session to the same file after exiting")
+                .takes_value(true)
+                .short("L"),
+        )
         .get_matches();
 
     let profile_name = matches
@@ -70,6 +94,15 @@ fn main() {
         .or(Some("default"))
         .unwrap();
     let bookmarks_sync = matches.is_present("bookmarks_sync");
+    let mut session_file_to_load = matches.value_of("load_session").map(|v| v.to_string());
+    let mut file_to_store_session_to = matches.value_of("save_session").map(|v| v.to_string());
+    let same_load_and_save = if let Some(load_save) = matches.value_of("save_load_session") {
+        session_file_to_load = Some(load_save.to_string());
+        file_to_store_session_to = Some(load_save.to_string());
+        Some(true)
+    } else {
+        None
+    };
 
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
@@ -79,6 +112,9 @@ fn main() {
         profile_name: profile_name.to_string(),
         profile_folder,
         bookmarks_sync,
+        session_file_to_load,
+        file_to_store_session_to,
+        same_load_and_save,
     };
     if let Err(e) = run(conf) {
         println!("Error from run : {}", e);
@@ -135,6 +171,29 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    let profile_folder_path = format!("{}", new_tmp_path.display());
+    if config.session_file_to_load.is_some() || config.file_to_store_session_to.is_some() {
+        session::adjust_profile_settings(
+            &profile_folder_path,
+            config.file_to_store_session_to.is_some(),
+        )?;
+    }
+    if config.session_file_to_load.is_some() {
+        session::add_sessionstore_file(
+            &config.session_file_to_load.unwrap(),
+            &profile_folder_path,
+            if let Some(same_file) = config.same_load_and_save {
+                if same_file {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            },
+        )?;
+    }
+
     let command = format!("firefox --profile {}", new_tmp_path.display());
 
     let latest_bookmark = match config.bookmarks_sync {
@@ -151,6 +210,13 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
     };
 
     execute_cmd(&command)?;
+
+    if config.file_to_store_session_to.is_some() {
+        session::save_sessionstore_file(
+            &config.file_to_store_session_to.unwrap(),
+            &profile_folder_path,
+        )?;
+    }
 
     if config.bookmarks_sync {
         if let Some(latest_bookmark) = latest_bookmark {
