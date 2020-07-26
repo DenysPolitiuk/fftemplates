@@ -43,6 +43,9 @@ const IGNORE_FILES: [&str; 9] = [
 
 const EXTENSIONS_JSON: &str = "extensions.json";
 
+const OPEN_SESSION_FILE_COMMAND: &str = "python3 /usr/bin/fftemplates_open_file.py";
+const SAVE_SESSION_FILE_COMMAND: &str = "python3 /usr/bin/fftemplates_save_file.py";
+
 pub struct Config {
     pub profile_name: String,
     pub profile_folder: PathBuf,
@@ -50,6 +53,8 @@ pub struct Config {
     pub session_file_to_load: Option<String>,
     pub file_to_store_session_to: Option<String>,
     pub same_load_and_save: Option<bool>,
+    pub session_prompt: bool,
+    pub session_prompt_load_skip: bool,
 }
 
 fn main() {
@@ -87,6 +92,18 @@ fn main() {
                 .takes_value(true)
                 .short("L"),
         )
+        .arg(
+            Arg::with_name("session_file_prompt")
+                .conflicts_with_all(&["load_session", "save_session", "save_load_session"])
+                .help("Show prompt to load/save session file before/after firefox")
+                .short("p"),
+        )
+        .arg(
+            Arg::with_name("session_file_prompt_skip_load")
+                .requires("session_file_prompt")
+                .help("Don't show prompt when starting")
+                .long("prompt-load-skip"),
+        )
         .get_matches();
 
     let profile_name = matches
@@ -103,6 +120,8 @@ fn main() {
     } else {
         None
     };
+    let session_prompt = matches.is_present("session_file_prompt");
+    let session_prompt_load_skip = matches.is_present("session_file_prompt_skip_load");
 
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
@@ -115,6 +134,8 @@ fn main() {
         session_file_to_load,
         file_to_store_session_to,
         same_load_and_save,
+        session_prompt,
+        session_prompt_load_skip,
     };
     if let Err(e) = run(conf) {
         println!("Error from run : {}", e);
@@ -172,15 +193,28 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
     }
 
     let profile_folder_path = format!("{}", new_tmp_path.display());
-    if config.session_file_to_load.is_some() || config.file_to_store_session_to.is_some() {
+    if config.session_file_to_load.is_some()
+        || config.file_to_store_session_to.is_some()
+        || config.session_prompt
+    {
         session::adjust_profile_settings(
             &profile_folder_path,
-            config.file_to_store_session_to.is_some(),
+            config.file_to_store_session_to.is_some() || config.session_prompt,
         )?;
     }
-    if config.session_file_to_load.is_some() {
+
+    let session_file_to_load = if config.session_prompt && !config.session_prompt_load_skip {
+        if let Some(file) = get_open_file()? {
+            Some(file)
+        } else {
+            config.session_file_to_load.clone()
+        }
+    } else {
+        config.session_file_to_load.clone()
+    };
+    if session_file_to_load.is_some() {
         session::add_sessionstore_file(
-            &config.session_file_to_load.unwrap(),
+            &session_file_to_load.unwrap(),
             &profile_folder_path,
             if let Some(same_file) = config.same_load_and_save {
                 if same_file {
@@ -211,11 +245,17 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     execute_cmd(&command)?;
 
-    if config.file_to_store_session_to.is_some() {
-        session::save_sessionstore_file(
-            &config.file_to_store_session_to.unwrap(),
-            &profile_folder_path,
-        )?;
+    let file_to_store_session_to = if config.session_prompt {
+        if let Some(file) = get_save_file()? {
+            Some(file)
+        } else {
+            config.file_to_store_session_to.clone()
+        }
+    } else {
+        config.file_to_store_session_to.clone()
+    };
+    if file_to_store_session_to.is_some() {
+        session::save_sessionstore_file(&file_to_store_session_to.unwrap(), &profile_folder_path)?;
     }
 
     if config.bookmarks_sync {
@@ -338,4 +378,44 @@ pub fn execute_cmd(cmd: &String) -> Result<(), Box<dyn Error>> {
     let _ = proc.wait_with_output()?;
 
     Ok(())
+}
+
+pub fn execute_cmd_output(cmd: &str) -> Result<String, Box<dyn Error>> {
+    let cmd_split: Vec<_> = cmd.split(' ').collect();
+    if cmd_split.len() < 1 || cmd_split[0] == "" {
+        return Err("No command specified")?;
+    }
+
+    let output = if cmd_split.len() < 2 {
+        Command::new(cmd_split[0]).output()?
+    } else {
+        Command::new(cmd_split[0])
+            .args(&cmd_split[1..cmd_split.len()])
+            .output()?
+    };
+
+    let result = String::from_utf8_lossy(&output.stdout);
+    let result = result.trim();
+
+    Ok(result.to_string())
+}
+
+pub fn get_open_file() -> Result<Option<String>, Box<dyn Error>> {
+    let file_name = execute_cmd_output(OPEN_SESSION_FILE_COMMAND)?;
+
+    if file_name != "" {
+        Ok(Some(file_name))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn get_save_file() -> Result<Option<String>, Box<dyn Error>> {
+    let file_name = execute_cmd_output(SAVE_SESSION_FILE_COMMAND)?;
+
+    if file_name != "" {
+        Ok(Some(file_name))
+    } else {
+        Ok(None)
+    }
 }
