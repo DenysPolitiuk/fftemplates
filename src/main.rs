@@ -55,6 +55,7 @@ pub struct Config {
     pub same_load_and_save: Option<bool>,
     pub session_prompt: bool,
     pub session_prompt_load_skip: bool,
+    pub session_prompt_save_skip: bool,
 }
 
 fn main() {
@@ -104,6 +105,12 @@ fn main() {
                 .help("Don't show prompt when starting")
                 .long("prompt-load-skip"),
         )
+        .arg(
+            Arg::with_name("session_file_prompt_skip_save")
+                .requires("session_file_prompt")
+                .help("Don't show prompt at the end to save session")
+                .long("prompt-save-skip"),
+        )
         .get_matches();
 
     let profile_name = matches
@@ -122,6 +129,7 @@ fn main() {
     };
     let session_prompt = matches.is_present("session_file_prompt");
     let session_prompt_load_skip = matches.is_present("session_file_prompt_skip_load");
+    let session_prompt_save_skip = matches.is_present("session_file_prompt_skip_save");
 
     let profile_folder = Path::new(&dirs::home_dir().unwrap())
         .join(Path::new(".mozilla"))
@@ -136,6 +144,7 @@ fn main() {
         same_load_and_save,
         session_prompt,
         session_prompt_load_skip,
+        session_prompt_save_skip,
     };
     if let Err(e) = run(conf) {
         println!("Error from run : {}", e);
@@ -245,7 +254,7 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     execute_cmd(&command)?;
 
-    let file_to_store_session_to = if config.session_prompt {
+    let file_to_store_session_to = if config.session_prompt && !config.session_prompt_save_skip {
         if let Some(file) = get_save_file()? {
             Some(file)
         } else {
